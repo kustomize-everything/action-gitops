@@ -1,0 +1,120 @@
+---
+name: action-gitops
+description: |
+  This action provides a standard way of adjusting replicas in a kustomize
+  deployment and opening a PR to deploy the changes to a k8s cluster.
+
+  Other workflows may be added to this action in the future.
+
+inputs:
+  operation:
+    description: The operation to run (adjust-replicas, etc)
+    required: true
+  environment:
+    description: The environment to perform the operation on
+    required: true
+  service-name:
+    description: The name of the service to perform the operation on
+    required: true
+  version:
+    description: Version of Kustomize to use
+    required: false
+    default: 5.1.1
+  sha256-checksum:
+    description: Checksum of Kustomize version
+    required: false
+    default: 3b30477a7ff4fb6547fa77d8117e66d995c2bdd526de0dafbf8b7bcb9556c85d
+  git-commit-user:
+    description: Name to add to the Git Commit Message
+    required: false
+    default: Kustomize Everything
+  git-commit-email:
+    description: Email to add to the Git Commit Message
+    required: false
+    default: kustomize-everything@users.noreply.github.com
+  token:
+    description: |
+      The token to use for pushing to the repo. This should be a bot account
+      with write access to the target repo, as well as PR access if it needs to
+      open a PR.
+    required: true
+  helm-version:
+    description: Helm Version to install
+    default: 3.9.4
+  base-branch:
+    description: The branch to open the PR against
+    default: main
+  replica_selector:
+    description: The selector to use for adjusting replicas, if not provided, the service-name will be used
+runs:
+  using: composite
+  steps:
+    - name: Checkout deployment repo
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        ref: main
+        token: ${{ inputs.token }}
+
+    # These variables are re-used by the run steps.
+    - name: Shared ENV Setup
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        ENV: ${{ inputs.environment }}
+        PUSH_ENVIRONMENT_REGEX: ${{ steps.detect-push-environment.outputs.match }}
+        PR_ENVIRONMENT_REGEX: ${{ steps.detect-pr-environment.outputs.match }}
+      run: ${{ github.action_path }}/setup-shared-env.sh
+
+    # Kustomize setup (this should be abstracted into a separate action repo)
+    - name: Kustomize Setup
+      uses: kustomize-everything/action-kustomize@v2.0.2
+      with:
+        version: ${{ inputs.version }}
+        sha256-checksum: ${{ inputs.sha256-checksum }}
+
+    - name: Install yq
+      uses: mikefarah/yq@v4.35.1
+
+    - name: Set Git Author
+      shell: bash
+      run: |
+        git config --global user.name ${{ inputs.git-commit-user }}
+        git config --global user.email ${{ inputs.git-commit-email }}
+
+    - name: Adjust Replicas
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      if: ${{ inputs.operation == 'adjust-replicas' }}
+      env:
+        SELECTOR: ${{ github.event.inputs.replica_selector || github.event.inputs.service_name }}
+      run: ${{ github.action_path }}/adjust-replicas.sh
+
+    - name: Open ${{ inputs.operation }} PR to ${{ inputs.environment }}
+      id: open-pr
+      uses: peter-evans/create-pull-request@v5
+      with:
+        title: ${{ inputs.operation }} on ${{ inputs.environment }}
+        body: "${{ inputs.operation }} for ${{ env.SELECTOR }} to ${{ inputs.replicas }} in ${{ inputs.environment }}"
+        base: ${{ input.base-branch }}
+        branch: ${{ env.BRANCH_NAME }}
+        delete-branch: true
+        token: ${{ inputs.token }}
+
+    - name: PR Opened or Updated
+      if: ${{ steps.open-pr.outputs.pull-request-number && (steps.open-pr.outputs.pull-request-operation == 'created' || steps.open-pr.outputs.pull-request-operation == 'updated') }}
+      shell: bash
+      run: |
+        echo "The ${{ inputs.operation }} PR for ${{ inputs.environment }} is waiting for
+          deployment after PR review and merge."
+        echo "Please review the k8s manifests in this PR and merge if ready
+          to deploy to ${{ inputs.environment }}."
+        echo "${{ steps.open-pr.outputs.pull-request-url }}"
+
+    - name: PR Closed
+      if: ${{ steps.open-pr.outputs.pull-request-number && steps.open-pr.outputs.pull-request-operation == 'closed' }}
+      shell: bash
+      run: |-
+        echo "The ${{ inputs.operation }} PR for ${{ inputs.environment }} has been closed as
+          there are no changes detected."
+        echo "${{ steps.open-pr.outputs.pull-request-url }}"
