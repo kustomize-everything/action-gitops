@@ -74,7 +74,7 @@ runs:
         sha256-checksum: ${{ inputs.sha256-checksum }}
 
     - name: Install yq
-      uses: mikefarah/yq@v4.35.1
+      uses: mikefarah/yq@v4.40.4
 
     - name: Set Git Author
       shell: bash
