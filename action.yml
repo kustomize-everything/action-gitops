@@ -92,7 +92,7 @@ runs:
 
     - name: Open ${{ inputs.operation }} PR to ${{ inputs.environment }}
       id: open-pr
-      uses: peter-evans/create-pull-request@v5
+      uses: peter-evans/create-pull-request@v6
       with:
         title: ${{ inputs.operation }} on ${{ inputs.environment }}
         body: "${{ inputs.operation }} for ${{ env.SELECTOR }} to ${{ inputs.replicas }} in ${{ inputs.environment }}"
